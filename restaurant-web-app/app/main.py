@@ -53,7 +53,9 @@ def restaurant_count():
 
 @app.route("/api/bookings", methods=["POST"])
 def create_booking():
-    data = request.get_json(force=True)
+    data = request.get_json(force=True, silent=True)
+    if not data:
+        return jsonify({"error": "Request body must be valid JSON"}), 400
     required = ["restaurant_name", "date", "time", "party_size", "name", "email"]
     missing = [f for f in required if not data.get(f)]
     if missing:

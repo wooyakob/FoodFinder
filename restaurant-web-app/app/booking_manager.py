@@ -1,14 +1,26 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from couchbase.cluster import Cluster
 from couchbase.options import ClusterOptions
 from couchbase.auth import PasswordAuthenticator
 from couchbase.exceptions import CouchbaseException, DocumentNotFoundException
+import couchbase.subdocument as SD
 from dotenv import load_dotenv
 
 
 class BookingManager:
+    """Manages restaurant reservations.
+
+    Storage mode is decided once at startup:
+    - If Couchbase initialises successfully → strict Couchbase mode;
+      runtime errors propagate to the caller rather than silently
+      switching stores mid-session.
+    - If Couchbase initialisation fails → strict in-memory mode for
+      the lifetime of the process (useful for local dev without a
+      Couchbase instance).
+    """
+
     def __init__(self):
         load_dotenv()
         pa = PasswordAuthenticator(os.getenv("CB_USERNAME"), os.getenv("CB_PASSWORD"))
@@ -34,9 +46,10 @@ class BookingManager:
                     print(f"[BookingManager] Could not create collection: {e}")
                     return False
             self._collection = self.scope.collection("bookings")
+            print("[BookingManager] Running in Couchbase mode")
             return True
         except Exception as e:
-            print(f"[BookingManager] Falling back to in-memory store: {e}")
+            print(f"[BookingManager] Couchbase init failed; running in in-memory mode: {e}")
             return False
 
     # ------------------------------------------------------------------ #
@@ -57,58 +70,59 @@ class BookingManager:
             "name": name,
             "email": email,
             "phone": phone,
-            "created_at": datetime.utcnow().isoformat() + "Z",
+            "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "status": "confirmed",
         }
 
-        if self._use_couchbase and self._collection is not None:
-            try:
-                self._collection.upsert(f"booking::{booking_id}", booking)
-                self._append_to_email_index(email, booking_id)
-                return booking
-            except CouchbaseException as e:
-                print(f"[BookingManager] Couchbase write error, using fallback: {e}")
+        if self._use_couchbase:
+            # Strict Couchbase mode — let exceptions propagate so the
+            # caller returns a proper error instead of silently storing
+            # in one backend and reading from another later.
+            self._collection.upsert(f"booking::{booking_id}", booking)
+            self._append_to_email_index(email, booking_id)
+            return booking
 
+        # Strict in-memory mode
         self._fallback[booking_id] = booking
-        email_idx = self._fallback.setdefault(f"__idx__{email}", {"ids": []})
-        email_idx["ids"].append(booking_id)
+        idx = self._fallback.setdefault(f"__idx__{email}", {"ids": []})
+        idx["ids"].append(booking_id)
         return booking
 
     def _append_to_email_index(self, email: str, booking_id: str) -> None:
+        """Atomically append a booking ID to the per-email index document."""
         idx_key = f"bookings::email::{email}"
         try:
-            result = self._collection.get(idx_key)
-            idx = result.content_as[dict]
-            idx["booking_ids"].append(booking_id)
-            self._collection.upsert(idx_key, idx)
+            # mutate_in is a server-side atomic operation — no read-modify-write race.
+            self._collection.mutate_in(idx_key, [SD.array_append("booking_ids", booking_id)])
         except DocumentNotFoundException:
-            self._collection.upsert(idx_key, {
-                "type": "booking_index",
-                "email": email,
-                "booking_ids": [booking_id],
-            })
+            try:
+                self._collection.insert(idx_key, {
+                    "type": "booking_index",
+                    "email": email,
+                    "booking_ids": [booking_id],
+                })
+            except CouchbaseException:
+                # Another concurrent request won the insert race; retry the append.
+                self._collection.mutate_in(idx_key, [SD.array_append("booking_ids", booking_id)])
 
     # ------------------------------------------------------------------ #
     # Read                                                                 #
     # ------------------------------------------------------------------ #
 
     def get_bookings_by_email(self, email: str) -> list[dict]:
-        if self._use_couchbase and self._collection is not None:
+        if self._use_couchbase:
             try:
-                idx_key = f"bookings::email::{email}"
-                idx = self._collection.get(idx_key).content_as[dict]
-                bookings = []
-                for bid in idx.get("booking_ids", []):
-                    try:
-                        doc = self._collection.get(f"booking::{bid}").content_as[dict]
-                        bookings.append(doc)
-                    except DocumentNotFoundException:
-                        pass
-                return sorted(bookings, key=lambda b: b.get("created_at", ""), reverse=True)
+                idx = self._collection.get(f"bookings::email::{email}").content_as[dict]
             except DocumentNotFoundException:
                 return []
-            except CouchbaseException as e:
-                print(f"[BookingManager] Couchbase read error: {e}")
+            bookings = []
+            for bid in idx.get("booking_ids", []):
+                try:
+                    doc = self._collection.get(f"booking::{bid}").content_as[dict]
+                    bookings.append(doc)
+                except DocumentNotFoundException:
+                    pass
+            return sorted(bookings, key=lambda b: b.get("created_at", ""), reverse=True)
 
         idx = self._fallback.get(f"__idx__{email}", {})
         bookings = [self._fallback[bid] for bid in idx.get("ids", []) if bid in self._fallback]
@@ -119,7 +133,7 @@ class BookingManager:
     # ------------------------------------------------------------------ #
 
     def cancel_booking(self, booking_id: str, email: str) -> tuple[bool, str | dict]:
-        if self._use_couchbase and self._collection is not None:
+        if self._use_couchbase:
             try:
                 key = f"booking::{booking_id}"
                 doc = self._collection.get(key).content_as[dict]
