@@ -8,14 +8,99 @@
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <h1>California Restaurant Finder</h1>
-    <form id="searchForm">
-        <input type="text" id="query" name="query" placeholder="Describe the restaurant you're dreaming of..." required style="width: 100%;">
-        <button type="submit">Search</button>
-    </form>
-    <div id="results"></div>
-    <div id="restaurantCountDisplay" class="restaurant-count">Loading restaurant count...</div>
-    
+    <header class="app-header">
+        <h1>California Restaurant Finder</h1>
+        <button class="btn-outline" id="myBookingsBtn">My Bookings</button>
+    </header>
+
+    <main class="app-main">
+        <form id="searchForm" class="search-form">
+            <input type="text" id="query" name="query"
+                   placeholder="Describe the restaurant you're dreaming of..." required>
+            <button type="submit">Search</button>
+        </form>
+        <div id="results"></div>
+    </main>
+
+    <div id="restaurantCountDisplay" class="restaurant-count">Loading…</div>
+
+    <!-- ==================== Booking Modal ==================== -->
+    <div id="bookingModal" class="modal-overlay" hidden>
+        <div class="modal-box">
+            <button class="modal-close" data-close="bookingModal">&times;</button>
+            <h2>Reserve a Table</h2>
+            <p id="bookingRestaurantName" class="modal-subtitle"></p>
+
+            <form id="bookingForm" novalidate>
+                <input type="hidden" id="bRestaurantName">
+                <input type="hidden" id="bRestaurantUrl">
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bDate">Date</label>
+                        <input type="date" id="bDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="bTime">Time</label>
+                        <select id="bTime" required></select>
+                    </div>
+                    <div class="form-group form-group--sm">
+                        <label for="bPartySize">Guests</label>
+                        <input type="number" id="bPartySize" min="1" max="20" value="2" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bName">Full Name</label>
+                        <input type="text" id="bName" placeholder="Jane Smith" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="bEmail">Email</label>
+                        <input type="email" id="bEmail" placeholder="jane@example.com" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bPhone">Phone (optional)</label>
+                        <input type="tel" id="bPhone" placeholder="+1 555 000-0000">
+                    </div>
+                </div>
+
+                <p id="bookingError" class="form-error" hidden></p>
+                <button type="submit" class="btn-primary btn-full">Confirm Reservation</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== Confirmation Modal ==================== -->
+    <div id="confirmModal" class="modal-overlay" hidden>
+        <div class="modal-box modal-box--sm">
+            <button class="modal-close" data-close="confirmModal">&times;</button>
+            <div class="confirm-icon">&#10003;</div>
+            <h2>Reservation Confirmed!</h2>
+            <div id="confirmDetails" class="confirm-details"></div>
+            <button class="btn-primary btn-full" data-close="confirmModal">Done</button>
+        </div>
+    </div>
+
+    <!-- ==================== My Bookings Modal ==================== -->
+    <div id="myBookingsModal" class="modal-overlay" hidden>
+        <div class="modal-box modal-box--wide">
+            <button class="modal-close" data-close="myBookingsModal">&times;</button>
+            <h2>My Bookings</h2>
+
+            <div class="email-lookup">
+                <input type="email" id="lookupEmail" placeholder="Enter your email…">
+                <button id="lookupBtn" class="btn-primary">Look up</button>
+            </div>
+
+            <p id="lookupError" class="form-error" hidden></p>
+            <div id="bookingsList"></div>
+        </div>
+    </div>
+
     <script src="/static/index.js"></script>
 </body>
 </html>
